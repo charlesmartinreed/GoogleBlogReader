@@ -17,20 +17,92 @@ class MasterViewController: UITableViewController, NSFetchedResultsControllerDel
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        // Do any additional setup after loading the view, typically from a nib.
-        navigationItem.leftBarButtonItem = editButtonItem
-
-        let addButton = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(insertNewObject(_:)))
-        navigationItem.rightBarButtonItem = addButton
-        if let split = splitViewController {
-            let controllers = split.viewControllers
-            detailViewController = (controllers[controllers.count-1] as! UINavigationController).topViewController as? DetailViewController
+        // we don't need an edit or add button, so those things were removed.
+        
+        //create our URL and data task
+        let url = URL(string: "https://www.googleapis.com/blogger/v3/blogs/10861780/posts?key=AIzaSyCtvLQNGQ1xKbl0qjvuCTBjWPT7TsdDStU")!
+        
+        let task = URLSession.shared.dataTask(with: url) { (data, response, error) in
+            if error != nil {
+                print(error ?? "Error: Could not begin data task")
+            } else {
+                //if we've got some data, let's try unwinding it.
+                if let urlData = data {
+                    
+                    do {
+                        //arrays and dictionaries are read as mutables
+                        let jsonResult = try JSONSerialization.jsonObject(with: urlData, options: .mutableContainers) as AnyObject
+                        
+                        //the blog itself is nested in items -> content
+                        if let items = jsonResult["items"] as? NSArray {
+                            
+                            let context = self.fetchedResultsController.managedObjectContext
+                            
+                            //delete the database to clear out for new data retrieval and prevent duplicate data
+                            let request = NSFetchRequest<Event>(entityName: "Event")
+                            
+                            do {
+                                let results = try context.fetch(request)
+                                if results.count > 0 {
+                                    //no need to downcast here as we're expecting events as a returned type
+                                    for result in results {
+                                        context.delete(result)
+                                        
+                                        do {
+                                            //update the database after each item is removed
+                                            try context.save()
+                                        } catch {
+                                            print("Error: Could not delete this item")
+                                        }
+                                    }
+                                }
+                            } catch {
+                                print("Could not delete")
+                            }
+                            
+                            for item in items as [AnyObject] {
+                                //print(item["published"])
+                                //print(item["title"])
+                                //print(item["content"])
+                                
+                                //attempt to save the info pulled from the JSON into Core Data
+                            
+                                let newEvent = Event(context: context)
+                                
+                                // If appropriate, configure the new managed object.
+                                newEvent.timestamp = Date()
+                                newEvent.setValue(item["published"] as? String, forKey: "published")
+                                newEvent.setValue(item["title"] as? String, forKey: "title")
+                                newEvent.setValue(item["content"] as? String, forKey: "content")
+                                
+                                // Save the context.
+                                do {
+                                    try context.save()
+                                } catch {
+                                    // Replace this implementation with code to handle the error appropriately.
+                                    // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
+                                    let nserror = error as NSError
+                                    fatalError("Unresolved error \(nserror), \(nserror.userInfo)")
+                                }
+                            }
+                            
+                            DispatchQueue.main.async(execute: {
+                                //executed when the process above is completed
+                                self.tableView.reloadData()
+                            })
+                        }
+                        
+                    } catch {
+                        print("JSON processing failed")
+                    }
+                    
+                }
+            }
         }
-    }
-
-    override func viewWillAppear(_ animated: Bool) {
-        clearsSelectionOnViewWillAppear = splitViewController!.isCollapsed
-        super.viewWillAppear(animated)
+        
+        //don't forget to run the task!
+        task.resume()
+        
     }
 
     @objc
@@ -80,33 +152,24 @@ class MasterViewController: UITableViewController, NSFetchedResultsControllerDel
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "Cell", for: indexPath)
         let event = fetchedResultsController.object(at: indexPath)
+        
         configureCell(cell, withEvent: event)
+        
         return cell
     }
 
     override func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {
         // Return false if you do not want the specified item to be editable.
-        return true
+        return false
     }
 
     override func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
-        if editingStyle == .delete {
-            let context = fetchedResultsController.managedObjectContext
-            context.delete(fetchedResultsController.object(at: indexPath))
-                
-            do {
-                try context.save()
-            } catch {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-                let nserror = error as NSError
-                fatalError("Unresolved error \(nserror), \(nserror.userInfo)")
-            }
-        }
+       //users should not be able to delete from the table, so this is removed
     }
 
     func configureCell(_ cell: UITableViewCell, withEvent event: Event) {
-        cell.textLabel!.text = event.timestamp!.description
+        cell.textLabel!.text = event.title
+        
     }
 
     // MARK: - Fetched results controller
@@ -122,7 +185,8 @@ class MasterViewController: UITableViewController, NSFetchedResultsControllerDel
         fetchRequest.fetchBatchSize = 20
         
         // Edit the sort key as appropriate.
-        let sortDescriptor = NSSortDescriptor(key: "timestamp", ascending: false)
+        //newest results at the top
+        let sortDescriptor = NSSortDescriptor(key: "published", ascending: false)
         
         fetchRequest.sortDescriptors = [sortDescriptor]
         
@@ -145,6 +209,7 @@ class MasterViewController: UITableViewController, NSFetchedResultsControllerDel
     }    
     var _fetchedResultsController: NSFetchedResultsController<Event>? = nil
 
+    //MARK:- Building responsive tables with automatic detecting of Core Data changes
     func controllerWillChangeContent(_ controller: NSFetchedResultsController<NSFetchRequestResult>) {
         tableView.beginUpdates()
     }
